@@ -73,3 +73,6 @@ def train_and_pred(train_features, train_labels, test_features, test_labels,
     net = get_net()
     train_ls, _ = train(net, train_features, train_labels, test_features,
                         test_labels, num_epochs, lr, weight_decay, batch_size)
+
+print(f'train rmse {float(train_ls[-1]):f}')
+
