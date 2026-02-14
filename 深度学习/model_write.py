@@ -26,19 +26,19 @@ def net():
 def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("using device:", device)
-    model = net()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.5)
+    model = net().to(device)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.5, weight_decay=0.001)
     loss = nn.CrossEntropyLoss()
     for epoch in range(num_epochs):
         for X, y in train_iter:
-            X, y = torch.randn(batch_size, num_inputs), 
-            torch.randint(0, num_outputs, (batch_size,))
-            X, y = X.to(device), y.to(device)
-        y_hat = model(X)
-        l = loss(y_hat, y)
-        l.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+            X = X.reshape(X.shape[0],-1).to(device)
+            y =  y.to(device)
+            optimizer.zero_grad()
+            y_hat = model(X)
+            l = loss(y_hat, y)
+            l.backward()
+            optimizer.step()
+        
 
         
     
