@@ -49,6 +49,27 @@ def evaluate_accuracy(net: nn.Module,
             total += y.numel()
     return correct / total
 
+def evaluate_accuracy_gpu(net: nn.Module, 
+                          data_iter: DataLoader, 
+                          device: torch.device) -> float:
+    if isinstance(net, nn.Module):
+        net.eval()
+        if not device:
+            device = next(iter(net.parameters())).device
+    metric = d2l.Accumulator(2)  # 正确预测数、预测总数
+    with torch.no_grad():
+        for X, y in data_iter:
+            if isinstance(X, list):
+                # BERT微调所需的（词ID、有效长度、类型ID）三元组
+                X = [x.to(device) for x in X]
+            else:
+                X = X.to(device)
+            y = y.to(device)
+            metric.add((net(X).argmax(dim=1) == y).sum().item(), y.numel())
+    return metric[0] / metric[1] 
+
+
+    
 
 def train(net: nn.Module, 
           train_iter: DataLoader, 
@@ -105,3 +126,29 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net = LeNet(num_classes=10)
     train(net, train_iter, test_iter, device=device, num_epochs=100, lr=0.9)
+
+def train_ch6(net,train_iter,test_iter,num_epochs,lr,device):
+    def init_weights(m):
+        if type(m) == nn.Linear or type(m) == nn.Conv2d:
+            nn.init.xavier_uniform_(m.weight)
+    net.apply(init_weights)
+    print('training on', device)
+    net.to(device)
+    optimizer = torch.optim.SGD(net.parameters(), lr=lr)
+    loss = nn.CrossEntropyLoss()
+    for epoch in range(num_epochs):
+        net.train()
+        train_loss_sum, train_acc_sum, n = 0.0, 0.0, 0
+        for X, y in train_iter:
+            X, y = X.to(device), y.to(device)
+            optimizer.zero_grad()
+            y_hat = net(X)
+            l = loss(y_hat, y)
+            l.backward()
+            optimizer.step()
+            train_loss_sum += l.cpu().item()
+            train_acc_sum += (y_hat.argmax(dim=1) == y).sum().cpu().item()
+            n += y.shape[0]
+        test_acc = evaluate_accuracy_gpu(net, test_iter)
+        print(f'epoch {epoch + 1}, loss {train_loss_sum / n:.4f}, '
+              f'train acc {train_acc_sum / n:.3f}, test acc {test_acc:.3f}')
