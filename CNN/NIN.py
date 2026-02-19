@@ -1,20 +1,26 @@
+﻿import os
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
+
 def nin_block(in_channels, out_channels, kernel_size, stride, padding, apply_last_relu=True):
     layers = [
         nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding),
-        nn.ReLU(),
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True),
         nn.Conv2d(out_channels, out_channels, kernel_size=1),
-        nn.ReLU(),
-        nn.Conv2d(out_channels, out_channels, kernel_size=1)
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(out_channels, out_channels, kernel_size=1),
     ]
     if apply_last_relu:
-        layers.append(nn.ReLU())
+        layers.append(nn.BatchNorm2d(out_channels))
+        layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
+
 
 def nin():
     return nn.Sequential(
@@ -27,8 +33,9 @@ def nin():
         nn.Dropout(0.5),
         nin_block(384, 10, kernel_size=3, stride=1, padding=1, apply_last_relu=False),
         nn.AdaptiveAvgPool2d((1, 1)),
-        nn.Flatten()
+        nn.Flatten(),
     )
+
 
 def evaluate(model, data_loader, device):
     model.eval()
@@ -43,6 +50,7 @@ def evaluate(model, data_loader, device):
             total += y.size(0)
     return correct / total if total > 0 else 0.0
 
+
 def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
     axes.set_xlabel(xlabel)
     axes.set_ylabel(ylabel)
@@ -56,9 +64,21 @@ def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
         axes.legend(legend)
     axes.grid()
 
-def plot(X, Y, xlabel=None, ylabel=None, legend=None, xlim=None, ylim=None,
-         xscale="linear", yscale="linear", fmts=("-", "m--"),
-         figsize=(6, 4), save_path="nin_train_curve.png"):
+
+def plot(
+    X,
+    Y,
+    xlabel=None,
+    ylabel=None,
+    legend=None,
+    xlim=None,
+    ylim=None,
+    xscale="linear",
+    yscale="linear",
+    fmts=("-", "m--"),
+    figsize=(6, 4),
+    save_path="nin_train_curve.png",
+):
     if legend is None:
         legend = []
     fig, axes = plt.subplots(1, 1, figsize=figsize)
@@ -71,32 +91,30 @@ def plot(X, Y, xlabel=None, ylabel=None, legend=None, xlim=None, ylim=None,
     fig.savefig(save_path, dpi=150)
     plt.show()
 
-def train(num_epochs=10, batch_size=128, lr=0.1):
+
+def train(num_epochs=10, batch_size=128, lr=0.05):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        transforms.Normalize((0.2860,), (0.3530,))
+        transforms.Normalize((0.2860,), (0.3530,)),
     ])
 
-    train_set = datasets.FashionMNIST(
-        root="./data", train=True, download=True, transform=transform
-    )
-    test_set = datasets.FashionMNIST(
-        root="./data", train=False, download=True, transform=transform
-    )
+    train_set = datasets.FashionMNIST(root="./data", train=True, download=True, transform=transform)
+    test_set = datasets.FashionMNIST(root="./data", train=False, download=True, transform=transform)
 
-    train_loader = DataLoader(train_set, 
-                              batch_size=batch_size, 
-                              shuffle=True, 
-                              num_workers=2)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=2)
+    num_workers = 0 if os.name == "nt" else 2
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     model = nin().to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+    optimizer = torch.optim.SGD(
+        model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4, nesterov=True
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
     train_losses = []
     train_accs = []
@@ -114,7 +132,7 @@ def train(num_epochs=10, batch_size=128, lr=0.1):
             optimizer.zero_grad()
             logits = model(x)
 
-            if epoch == 0 and total == 0:  # 第一个epoch第一个batch
+            if epoch == 0 and total == 0:
                 print("x mean/std:", x.mean().item(), x.std().item())
                 print("logits mean/std:", logits.mean().item(), logits.std().item())
                 print("logits[0]:", logits[0].detach().cpu())
@@ -137,8 +155,10 @@ def train(num_epochs=10, batch_size=128, lr=0.1):
         epochs.append(epoch + 1)
         print(
             f"Epoch [{epoch + 1}/{num_epochs}] "
-            f"Loss: {train_loss:.4f} Train Acc: {train_acc:.4f} Test Acc: {test_acc:.4f}"
+            f"Loss: {train_loss:.4f} Train Acc: {train_acc:.4f} Test Acc: {test_acc:.4f} "
+            f"LR: {optimizer.param_groups[0]['lr']:.6f}"
         )
+        scheduler.step()
 
     torch.save(model.state_dict(), "nin_fashionmnist.pth")
     print("Model saved to nin_fashionmnist.pth")
@@ -151,7 +171,7 @@ def train(num_epochs=10, batch_size=128, lr=0.1):
         legend=["train loss", "test acc"],
         xlim=[1, num_epochs],
         fmts=("-", "m--"),
-        save_path="nin_train_curve.png"
+        save_path="nin_train_curve.png",
     )
     print("Train curve saved to nin_train_curve.png")
 
@@ -164,9 +184,10 @@ def train(num_epochs=10, batch_size=128, lr=0.1):
         xlim=[1, num_epochs],
         ylim=[0, 1],
         fmts=("-", "m--"),
-        save_path="nin_acc_curve.png"
+        save_path="nin_acc_curve.png",
     )
     print("Acc curve saved to nin_acc_curve.png")
+
 
 if __name__ == "__main__":
     train()
